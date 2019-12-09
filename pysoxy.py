@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 Small Socks5 Proxy Server in Python
@@ -10,7 +11,7 @@ import select
 from struct import pack, unpack
 # System
 import traceback
-from threading import Thread, activeCount
+from threading import Thread, active_count
 from signal import signal, SIGINT, SIGTERM
 from time import sleep
 from logzero import logger
@@ -31,40 +32,43 @@ LOCAL_PORT = 1080
 # OUTGOING_INTERFACE = "eth0"
 OUTGOING_INTERFACE = ""
 
-#
+
 # Constants
-#
+
 '''Version of the protocol'''
 VER = b'\x05' # PROTOCOL VERSION 5
 
-'''Method constants'''
-M_NOAUTH = b'\x00' # '00' NO AUTHENTICATION REQUIRED
-M_NOTAVAILABLE = b'\xff' # 'FF' NO ACCEPTABLE METHODS
+class AuthMethod:
+    """Method constants"""
+    NOAUTH = b'\x00' # '00' NO AUTHENTICATION REQUIRED
+    NOTAVAILABLE = b'\xff' # 'FF' NO ACCEPTABLE METHODS
 
-'''Command constants'''
-CMD_CONNECT = b'\x01' # CONNECT '01'
+class Cmd:
+    """Command constants"""
+    CONNECT = b'\x01' # CONNECT '01'
 
-'''Address type constants'''
-ATYP_IPV4 = b'\x01' # IP V4 address '01'
-ATYP_DOMAINNAME = b'\x03' # DOMAINNAME '03'
+class AddrType:
+    """Address type constants"""
+    IPV4 = b'\x01' # IP V4 address '01'
+    DOMAINNAME = b'\x03' # DOMAINNAME '03'
 
 
 class ExitStatus:
-    """ Manage exit status """
+    """Manage exit status"""
     def __init__(self):
         self.exit = False
 
     def set_status(self, status):
-        """ set exist status """
+        """set exist status"""
         self.exit = status
 
     def get_status(self):
-        """ get exit status """
+        """get exit status"""
         return self.exit
 
 
 def proxy_loop(socket_src, socket_dst):
-    """ Wait for network activity """
+    """Wait for network activity"""
     while not EXIT.get_status():
         try:
             reader, _, _ = select.select([socket_src, socket_dst], [], [], 1)
@@ -88,7 +92,7 @@ def proxy_loop(socket_src, socket_dst):
 
 
 def connect_to_dst(dst_addr, dst_port):
-    """ Connect to desired destination """
+    """Connect to desired destination"""
     sock = create_socket()
     if OUTGOING_INTERFACE:
         try:
@@ -123,16 +127,16 @@ def request_client(wrapper):
     # Check VER, CMD and RSV
     if (
             s5_request[0:1] != VER or
-            s5_request[1:2] != CMD_CONNECT or
+            s5_request[1:2] != Cmd.CONNECT or
             s5_request[2:3] != b'\x00'
     ):
         return False
     # IPV4
-    if s5_request[3:4] == ATYP_IPV4:
+    if s5_request[3:4] == AddrType.IPV4:
         dst_addr = socket.inet_ntoa(s5_request[4:-2])
         dst_port = unpack('>H', s5_request[8:len(s5_request)])[0]
     # DOMAIN NAME
-    elif s5_request[3:4] == ATYP_DOMAINNAME:
+    elif s5_request[3:4] == AddrType.DOMAINNAME:
         sz_domain_name = s5_request[4]
         dst_addr = s5_request[5: 5 + sz_domain_name - len(s5_request)]
         port_to_unpack = s5_request[5 + sz_domain_name:len(s5_request)]
@@ -145,10 +149,10 @@ def request_client(wrapper):
 
 def request(wrapper):
     """
-        The SOCKS request information is sent by the client as soon as it has
-        established a connection to the SOCKS server, and completed the
-        authentication negotiations.  The server evaluates the request, and
-        returns a reply
+    The SOCKS request information is sent by the client as soon as it has
+    established a connection to the SOCKS server, and completed the
+    authentication negotiations.  The server evaluates the request, and
+    returns a reply
     """
     dst = request_client(wrapper)
     # Server Reply
@@ -165,7 +169,7 @@ def request(wrapper):
         rep = b'\x00'
         bnd = socket.inet_aton(socket_dst.getsockname()[0])
         bnd += pack(">H", socket_dst.getsockname()[1])
-    reply = VER + rep + b'\x00' + ATYP_IPV4 + bnd
+    reply = VER + rep + b'\x00' + AddrType.IPV4 + bnd
     try:
         wrapper.sendall(reply)
     except socket.error:
@@ -183,8 +187,8 @@ def request(wrapper):
 
 def subnegotiation_client(wrapper):
     """
-        The client connects to the server, and sends a version
-        identifier/method selection message
+    The client connects to the server, and sends a version
+    identifier/method selection message
     """
     # Client Version identifier/method selection message
     # +----+----------+----------+
@@ -194,34 +198,34 @@ def subnegotiation_client(wrapper):
         identification_packet = wrapper.recv(BUFSIZE)
     except socket.error:
         logger.exception('')
-        return M_NOTAVAILABLE
+        return AuthMethod.NOTAVAILABLE
     # VER field
     if VER != identification_packet[0:1]:
-        return M_NOTAVAILABLE
+        return AuthMethod.NOTAVAILABLE
     # METHODS fields
     nmethods = identification_packet[1]
     methods = identification_packet[2:]
     if len(methods) != nmethods:
-        return M_NOTAVAILABLE
+        return AuthMethod.NOTAVAILABLE
     for method in methods:
-        if method == ord(M_NOAUTH):
-            return M_NOAUTH
-    return M_NOTAVAILABLE
+        if method == ord(AuthMethod.NOAUTH):
+            return AuthMethod.NOAUTH
+    return AuthMethod.NOTAVAILABLE
 
 
 def subnegotiation(wrapper):
     """
-        The client connects to the server, and sends a version
-        identifier/method selection message
-        The server selects from one of the methods given in METHODS, and
-        sends a METHOD selection message
+    The client connects to the server, and sends a version
+    identifier/method selection message
+    The server selects from one of the methods given in METHODS, and
+    sends a METHOD selection message
     """
     method = subnegotiation_client(wrapper)
     # Server Method selection message
     # +----+--------+
     # |VER | METHOD |
     # +----+--------+
-    if method != M_NOAUTH:
+    if method != AuthMethod.NOAUTH:
         return False
     reply = VER + method
     try:
@@ -233,13 +237,13 @@ def subnegotiation(wrapper):
 
 
 def connection(wrapper):
-    """ Function run by a thread """
+    """Function run by a thread"""
     if subnegotiation(wrapper):
         request(wrapper)
 
 
 def create_socket():
-    """ Create an INET, STREAMing socket """
+    """Create an INET, STREAMing socket"""
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(TIMEOUT_SOCKET)
@@ -251,8 +255,8 @@ def create_socket():
 
 def bind_port(sock):
     """
-        Bind the socket to address and
-        listen for connections made to the socket
+    Bind the socket to address and
+    listen for connections made to the socket
     """
     try:
         print('Bind {}'.format(str(LOCAL_PORT)))
@@ -273,20 +277,18 @@ def bind_port(sock):
 
 
 def exit_handler(signum, frame):
-    """ Signal handler called with signal, exit script """
+    """Signal handler called with signal, exit script"""
     print('Signal handler called with signal', signum)
     EXIT.set_status(True)
 
 
 def main():
-    """ Main function """
-
     new_socket = create_socket()
     bind_port(new_socket)
     signal(SIGINT, exit_handler)
     signal(SIGTERM, exit_handler)
     while not EXIT.get_status():
-        if activeCount() > MAX_THREADS:
+        if active_count() > MAX_THREADS:
             sleep(3)
             continue
         try:
