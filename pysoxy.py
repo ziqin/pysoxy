@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
- Small Socks5 Proxy Server in Python
- from https://github.com/MisterDaneel/
+Small Socks5 Proxy Server in Python
+from https://github.com/MisterDaneel/
 """
 
 # Network
@@ -13,6 +13,7 @@ import traceback
 from threading import Thread, activeCount
 from signal import signal, SIGINT, SIGTERM
 from time import sleep
+from logzero import logger
 import sys
 
 #
@@ -22,7 +23,7 @@ MAX_THREADS = 200
 BUFSIZE = 2048
 TIMEOUT_SOCKET = 5
 LOCAL_ADDR = '0.0.0.0'
-LOCAL_PORT = 9050
+LOCAL_PORT = 1080
 # Parameter to bind a socket to a device, using SO_BINDTODEVICE
 # Only root can set this option
 # If the name is an empty string or None, the interface is chosen when
@@ -34,21 +35,18 @@ OUTGOING_INTERFACE = ""
 # Constants
 #
 '''Version of the protocol'''
-# PROTOCOL VERSION 5
-VER = b'\x05'
+VER = b'\x05' # PROTOCOL VERSION 5
+
 '''Method constants'''
-# '00' NO AUTHENTICATION REQUIRED
-M_NOAUTH = b'\x00'
-# 'FF' NO ACCEPTABLE METHODS
-M_NOTAVAILABLE = b'\xff'
+M_NOAUTH = b'\x00' # '00' NO AUTHENTICATION REQUIRED
+M_NOTAVAILABLE = b'\xff' # 'FF' NO ACCEPTABLE METHODS
+
 '''Command constants'''
-# CONNECT '01'
-CMD_CONNECT = b'\x01'
+CMD_CONNECT = b'\x01' # CONNECT '01'
+
 '''Address type constants'''
-# IP V4 address '01'
-ATYP_IPV4 = b'\x01'
-# DOMAINNAME '03'
-ATYP_DOMAINNAME = b'\x03'
+ATYP_IPV4 = b'\x01' # IP V4 address '01'
+ATYP_DOMAINNAME = b'\x03' # DOMAINNAME '03'
 
 
 class ExitStatus:
@@ -65,22 +63,13 @@ class ExitStatus:
         return self.exit
 
 
-def error(msg="", err=None):
-    """ Print exception stack trace python """
-    if msg:
-        traceback.print_exc()
-        print("{} - Code: {}, Message: {}".format(msg, str(err[0]), err[1]))
-    else:
-        traceback.print_exc()
-
-
 def proxy_loop(socket_src, socket_dst):
     """ Wait for network activity """
     while not EXIT.get_status():
         try:
             reader, _, _ = select.select([socket_src, socket_dst], [], [], 1)
         except select.error as err:
-            error("Select failed", err)
+            logger.error(f'Select failed: {err}')
             return
         if not reader:
             continue
@@ -94,7 +83,7 @@ def proxy_loop(socket_src, socket_dst):
                 else:
                     socket_dst.send(data)
         except socket.error as err:
-            error("Loop failed", err)
+            logger.error(f'Loop failed: {err}')
             return
 
 
@@ -109,13 +98,13 @@ def connect_to_dst(dst_addr, dst_port):
                 OUTGOING_INTERFACE.encode(),
             )
         except PermissionError as err:
-            print("Only root can set OUTGOING_INTERFACE parameter")
+            print('Only root can set OUTGOING_INTERFACE parameter')
             EXIT.set_status(True)
     try:
         sock.connect((dst_addr, dst_port))
         return sock
     except socket.error as err:
-        error("Failed to connect to DST", err)
+        logger.error('Failed to connect to %s:%d, %s', dst_addr.decode(), dst_port, err)
         return 0
 
 
@@ -129,7 +118,7 @@ def request_client(wrapper):
     except ConnectionResetError:
         if wrapper != 0:
             wrapper.close()
-        error()
+        logger.exception('Connection reset')
         return False
     # Check VER, CMD and RSV
     if (
@@ -150,7 +139,7 @@ def request_client(wrapper):
         dst_port = unpack('>H', port_to_unpack)[0]
     else:
         return False
-    print(dst_addr, dst_port)
+    logger.info('%s:%d', dst_addr.decode(), dst_port)
     return (dst_addr, dst_port)
 
 
@@ -204,7 +193,7 @@ def subnegotiation_client(wrapper):
     try:
         identification_packet = wrapper.recv(BUFSIZE)
     except socket.error:
-        error()
+        logger.exception('')
         return M_NOTAVAILABLE
     # VER field
     if VER != identification_packet[0:1]:
@@ -238,7 +227,7 @@ def subnegotiation(wrapper):
     try:
         wrapper.sendall(reply)
     except socket.error:
-        error()
+        logger.exception('')
         return False
     return True
 
@@ -254,8 +243,8 @@ def create_socket():
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(TIMEOUT_SOCKET)
-    except socket.error as err:
-        error("Failed to create socket", err)
+    except socket.error:
+        logger.exception('Failed to create socket')
         sys.exit(0)
     return sock
 
@@ -269,15 +258,15 @@ def bind_port(sock):
         print('Bind {}'.format(str(LOCAL_PORT)))
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind((LOCAL_ADDR, LOCAL_PORT))
-    except socket.error as err:
-        error("Bind failed", err)
+    except socket.error:
+        logger.exception('Bind failed')
         sock.close()
         sys.exit(0)
     # Listen
     try:
         sock.listen(10)
-    except socket.error as err:
-        error("Listen failed", err)
+    except socket.error:
+        logger.exception('Listen failed')
         sock.close()
         sys.exit(0)
     return sock
@@ -291,6 +280,7 @@ def exit_handler(signum, frame):
 
 def main():
     """ Main function """
+
     new_socket = create_socket()
     bind_port(new_socket)
     signal(SIGINT, exit_handler)
@@ -305,10 +295,10 @@ def main():
         except socket.timeout:
             continue
         except socket.error:
-            error()
+            logger.exception('')
             continue
         except TypeError:
-            error()
+            logger.exception('')
             sys.exit(0)
         recv_thread = Thread(target=connection, args=(wrapper, ))
         recv_thread.start()
